@@ -1,4 +1,9 @@
+#! ./bin/python3
+# -*- encoding: utf-8 -*-
+
 import sys
+import os.path
+import argparse
 from itertools import chain
 
 import numpy as np
@@ -6,8 +11,18 @@ from PIL import Image
 
 BITS = 256
 
-def get_image_data(filename, mode="L"):
+
+# Image IO
+
+def get_image_data(filename, mode):
     return np.asarray(Image.open(filename).convert(mode))
+
+
+def get_new_image(outdata, mode):
+    return Image.fromarray(outdata, mode)
+
+
+# Histogram Functions
 
 def get_grayscale_histogram(imgdata):
     histogram = [0] * BITS
@@ -23,13 +38,16 @@ def get_rgb_histogram(imgdata):
         red[color[0]] += 1
         green[color[1]] += 1
         blue[color[2]] += 1
-    return (red, green, blue)
+    return red, green, blue
 
 def get_hsv_histogram(imgdata):
     value = [0] * BITS
     for i in chain.from_iterable(imgdata):
         value[i[2]] += 1
     return value
+
+
+# Cumulative Distribution Functions
 
 def get_cdf(histogram):
     cdf = [0] * BITS
@@ -38,15 +56,23 @@ def get_cdf(histogram):
         cdf[i] = cdf[i-1] + histogram[i]
     return cdf
 
-def get_rgb_cdf(red, green, blue):
-    return (get_cdf(red), get_cdf(green), get_cdf(blue))
+def get_rgb_cdf(rgb):
+    return get_cdf(rgb[0]), get_cdf(rgb[1]), get_cdf(rgb[2])
+
+
+# Equalization Functions
 
 def equalize(cdf):
     nzmin = min(filter(lambda x: x > 0, cdf))
+    if cdf[-1] - nzmin == 0:
+        sys.exit("Image cannot be equalized in all channels (div by zero)")
     return [round(((cdf[i] - nzmin) / (cdf[-1] - nzmin)) * (BITS - 1)) for i in range(BITS)]
 
-def equalize_rgb(red, green, blue):
-    return (equalize(red), equalize(green), equalize(blue))
+def equalize_rgb(rgbcdf):
+    return equalize(rgbcdf[0]), equalize(rgbcdf[1]), equalize(rgbcdf[2])
+
+
+# Image Data Transformation Functions
 
 def transform_grayscale(equalized, indata):
     outdata = np.zeros_like(indata)
@@ -55,100 +81,138 @@ def transform_grayscale(equalized, indata):
             outdata[i, j] = equalized[indata[i, j]]
     return outdata
 
-def transform_rgb(red, green, blue, indata):
+def transform_rgb(rgb, indata):
     outdata = np.zeros_like(indata)
     for i in range(indata.shape[0]):
         for j in range(indata.shape[1]):
-            outdata[i, j] = [red[indata[i, j, 0]], green[indata[i, j, 1]], blue[indata[i, j, 2]]]
-    return outdata
-
-def transform_red(red, indata):
-    outdata = np.zeros_like(indata)
-    for i in range(indata.shape[0]):
-        for j in range(indata.shape[1]):
-            outdata[i, j] = [red[indata[i, j, 0]], 0, 0]
-    return outdata
-
-def transform_green(green, indata):
-    outdata = np.zeros_like(indata)
-    for i in range(indata.shape[0]):
-        for j in range(indata.shape[1]):
-            outdata[i, j] = [0, green[indata[i, j, 1]], 0]
-    return outdata
-
-def transform_blue(blue, indata):
-    outdata = np.zeros_like(indata)
-    for i in range(indata.shape[0]):
-        for j in range(indata.shape[1]):
-            outdata[i, j] = [0, 0, blue[indata[i, j, 2]]]
+            outdata[i, j] = [rgb[0][indata[i, j, 0]],
+                             rgb[1][indata[i, j, 1]],
+                             rgb[2][indata[i, j, 2]]]
     return outdata
 
 def transform_hsv(equalized, indata):
     outdata = np.zeros_like(indata)
     for i in range(indata.shape[0]):
         for j in range(indata.shape[1]):
-            outdata[i, j] = [indata[i, j, 0], indata[i, j, 1], equalized[indata[i, j, 2]]]
+            outdata[i, j] = [indata[i, j, 0],
+                             indata[i, j, 1],
+                             equalized[indata[i, j, 2]]]
     return outdata
 
-def get_new_image(outdata, mode="L"):
-    return Image.fromarray(outdata, mode)
+def transform_split(rgb, indata):
+    redout = np.zeros_like(indata)
+    greenout = np.zeros_like(indata)
+    blueout = np.zeros_like(indata)
+    for i in range(indata.shape[0]):
+        for j in range(indata.shape[1]):
+            redout[i, j] = [rgb[0][indata[i, j, 0]], 0, 0]
+            greenout[i, j] = [0, rgb[1][indata[i, j, 1]], 0]
+            blueout[i, j] = [0, 0, rgb[2][indata[i, j, 2]]]
+    return redout, greenout, blueout
+
+
+# Gradient Functions
+
+
+
+# Convenience Functions
+
+def rgb_split_preprocess(indata):
+    hist = get_grayscale_histogram(indata)
+    outdata = transform_split((hist, hist, hist), indata)
+    get_new_image(outdata[0], "RGB").show()
+    get_new_image(outdata[1], "RGB").show()
+    get_new_image(outdata[2], "RGB").show()
+    return
+    
+
+def rgb_split(rgbeq, indata):
+    outdata = transform_split(rgbeq, indata)
+    return  (get_new_image(outdata[0], "RGB"),
+             get_new_image(outdata[1], "RGB"),
+             get_new_image(outdata[2], "RGB"))
+
+def equalize_multichannel(indata):
+    return equalize_rgb(get_rgb_cdf(get_rgb_histogram(indata)))
+
+def equalize_singlechannel(indata):
+    return equalize(get_cdf(get_grayscale_histogram(indata)))
+
+
+# CLI Interface : Eventually Separate Out
+# Separate Histogram Equalization module from Gradient Module also
+
+parser = argparse.ArgumentParser(
+    description="Process image file using Histogram Equalization or X-Y Gradient"
+)
+optiongroup = parser.add_mutually_exclusive_group()
+parser.add_argument("filename", help="The path to the image file")
+parser.add_argument("mode",
+                    help="The image file mode: " + 
+                    "l = Grayscale, p = Palette, rgb = True Color, hsv = Hue-Saturation-Value",
+                    choices=["l", "p", "rgb", "hsv"],
+                    default="l")
+parser.add_argument("-i", "--initial",
+                    help="Show original images",
+                    action="store_true",
+                    dest="initial",
+                    required=False)
+optiongroup.add_argument("-s", "--split",
+                         help="split image into separate R, G, and B channel images",
+                         action="store_true",)
+optiongroup.add_argument("-a", "--all",
+                         help="perform histogram equalization on all HSV channels",
+                         action="store_true")
+
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        sys.exit("Usage: python images.py image.format [L | RGB [SPLIT]]")
-
-    fname = sys.argv[1]
-    mode = sys.argv[2].upper()    
-    indata = get_image_data(fname, mode)
-    if mode == "L" or mode == "P":
-        hist = get_grayscale_histogram(indata)
-        cdf = get_cdf(hist)
-        equalized = equalize(cdf)
-        outdata = transform_grayscale(equalized, indata)
-        new_image = get_new_image(outdata, mode)
-        new_image.show()
-    elif mode == "RGB" and len(sys.argv) < 4:
-        red, green, blue = get_rgb_histogram(indata)
-        rcdf, gcdf, bcdf = get_rgb_cdf(red, green, blue)
-        req, geq, beq = equalize_rgb(rcdf, gcdf, bcdf)
-        outdata = transform_rgb(req, geq, beq, indata)
-        new_image = get_new_image(outdata, mode)
-        new_image.show()
-    elif mode == "HSV" and len(sys.argv) < 4:
-        hist = get_hsv_histogram(indata)
-        cdf = get_cdf(hist)
-        equalized = equalize(cdf)
-        outdata = transform_hsv(equalized, indata)
-        new_image = get_new_image(outdata, mode)
-        new_image.show()
-    elif mode == "HSV" and sys.argv[3] == "all":
-        h, s, v = get_rgb_histogram(indata)
-        hcdf, scdf, vcdf = get_rgb_cdf(h, s, v)
-        heq, seq, veq = equalize_rgb(h, s, v)
-        outdata = transform_rgb(heq, seq, veq, indata)
-        new_image = get_new_image(outdata, mode)
-        new_image.show()
-    elif mode == "HSV" and sys.argv[3] == "value":
-        v = get_hsv_histogram(indata)
-        vcdf = get_cdf(v)
-        veq = equalize(vcdf)
-        outdata = transform_blue(veq, indata)
-        new_image = get_new_image(outdata, "HSV")
-        new_image.show()
-    elif mode == "RGB" and sys.argv[3] == "split":
-        red, green, blue = get_rgb_histogram(indata)
-        rcdf, gcdf, bcdf = get_rgb_cdf(red, green, blue)
-        req, geq, beq = equalize_rgb(rcdf, gcdf, bcdf)
-        outred = transform_red(req, indata)
-        outgreen = transform_green(geq, indata)
-        outblue = transform_blue(beq, indata)
-        new_red = get_new_image(outred, "RGB")
-        new_green = get_new_image(outgreen, "RGB")
-        new_blue = get_new_image(outblue, "RGB")
-        new_red.show()
-        new_green.show()
-        new_blue.show()
-    else:
-        sys.exit("Choose mode L or RGB")
-sys.exit(0)
+    args = parser.parse_args()
     
+    filename = os.path.abspath(args.filename)
+    if not os.path.exists(filename):
+        sys.exit(f"{os.path.basename(filename)} not found")
+        
+    mode = args.mode.upper()
+    indata = get_image_data(filename, mode)
+
+    if args.initial:
+        get_new_image(indata, mode).show()
+        if args.split:
+            rgb_split_preprocess(indata)
+    
+    if mode == "L" or mode == "P":
+        eq = equalize_singlechannel(indata)
+        if args.split:
+            indata = get_image_data(filename, "RGB")
+            redimg, greenimg, blueimg = rgb_split((eq, eq, eq), indata)
+            redimg.show()
+            greenimg.show()
+            blueimg.show()
+        else:
+            outdata = transform_grayscale(eq, indata)
+            grayscaleimg = get_new_image(outdata, mode)
+            grayscaleimg.show()
+    elif mode == "RGB":
+        eq = equalize_multichannel(indata)
+        if args.split:
+            redimg, greenimg, blueimg = rgb_split(eq, indata)
+            redimg.show()
+            greenimg.show()
+            blueimg.show()
+        else:
+            outdata = transform_rgb(eq, indata)
+            rgbimg = get_new_image(outdata, mode)
+            rgbimg.show()
+    elif mode == "HSV":
+        if args.all:
+            outdata = transform_rgb(equalize_multichannel(indata), indata)
+            allhsvimg = get_new_image(outdata, mode)
+            allhsvimg.show()
+        else:
+            hist = get_hsv_histogram(indata)
+            outdata = transform_hsv(equalize(get_cdf(hist)), indata)
+            hsvimg = get_new_image(outdata, mode)
+            hsvimg.show()
+    else:
+        sys.exit(-1)
+    sys.exit(0)
