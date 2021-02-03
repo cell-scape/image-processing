@@ -1,6 +1,7 @@
 import sys
 import os.path
 import argparse
+from math import sqrt
 from itertools import chain
 
 import numpy as np
@@ -164,7 +165,7 @@ def native_convolve(imgdata, kernel, threshold, normalize):
 def basic(indata, threshold=0, norm=0):
     x = convolve(indata, BASIC_X, threshold, norm)
     y = convolve(indata, BASIC_Y, threshold, norm)
-    return x, y, np.hypot(x, y)
+    return x, y
 
 def roberts(indata, threshold=0, norm=0):
     get_new_image(convolve(indata, ROBERTS, threshold, norm), "L").show()
@@ -174,32 +175,53 @@ def sobel(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves Sobel operator with image data"""
     sx = convolve(indata, SOBEL_GX, threshold, norm)
     sy = convolve(indata, SOBEL_GY, threshold, norm)
-    return sx, sy, np.hypot(sx, sy)
+    return sx, sy
 
 def prewitt(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves Prewitt operator with image data"""
     px = convolve(indata, PREWITT_GX, threshold, norm)
     py = convolve(indata, PREWITT_GY, threshold, norm)
-    return px, py, np.hypot(px, py)
+    return px, py
 
 def scharr(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves common Scharr operator with image data"""
     scx = convolve(indata, SCHARR_GX, threshold, norm)
     scy = convolve(indata, SCHARR_GY, threshold, norm)
-    return scx, scy, np.hypot(scx, scy)
+    return scx, scy
 
 def optimal(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves optimal Scharr operator with images data"""
     ox = convolve(indata, OPTIMAL_GX, threshold, norm)
     oy = convolve(indata, OPTIMAL_GY, threshold, norm)
-    return ox, oy, np.hypot(ox, oy)
+    return ox, oy
 
-def gradient_images(imgdata, kernel, threshold=0, norm=0):
+def gradient_images(imgdata, kernel, threshold=0, norm=0, m=False):
     """Returns tuple of x, y, and mag gradient images. Takes image data and a kernel"""
-    x, y, mag = kernel(imgdata, threshold, norm)
+    if m:
+        x, y = kernel(imgdata, 0, norm)
+        mag = gmag(x, y, threshold)
+    else:
+        x, y = kernel(imgdata, threshold, norm)
+        mag = gmag(x, y, threshold)
     return (get_new_image(x, "L"),
             get_new_image(y, "L"),
-            get_new_image(mag, "L"))
+            get_new_image(mag[0], "L"),
+            get_new_image(mag[1], "L"))
+
+def gmag(gx, gy, threshold=0):
+    row, col = gx.shape
+    out = np.zeros_like(gx)
+    timg = np.zeros_like(gx)
+    for i in range(row):
+        for j in range(col):
+            val = sqrt(gx[i, j]**2 + gy[i, j]**2)
+            if val > threshold:
+                out[i, j] = val
+                timg[i, j] = 255
+            else:
+                out[i, j] = 0
+                timg[i, j] = 0
+    return out, timg
 
 
 # Convenience Functions
@@ -262,6 +284,11 @@ def setup_argparse():
                         type=int,
                         default=0,
                         required=False)
+    parser.add_argument("-m", "-magnitude-threshold",
+                        dest="m",
+                        help="Apply threshold value only to Magnitude",
+                        action="store_true",
+                        required=False)
     parser.add_argument("-n", "--normalize",
                         help="Locally Normalize Gradient",
                         dest="norm",
@@ -297,6 +324,7 @@ if __name__ == '__main__':
 
     mode = args.mode.upper()
     grad = False
+    m = False
     norm = 0
     if mode == "GRADIENT":
         grad = True
@@ -311,19 +339,25 @@ if __name__ == '__main__':
     if grad:
         if args.norm:
             norm = 1
+            
+        if args.m:
+            m = True
+            
         if args.threshold < 0 or args.threshold > 255:
             sys.exit("Threshold value must be 0-255")
-        x, y, mag = gradient_images(indata, eval(args.operator), args.threshold, norm)
+        x, y, mag, thr = gradient_images(indata, eval(args.operator), args.threshold, norm, m=False)
         if args.x:
             x.show()
         elif args.y:
             y.show()
         elif args.mag:
             mag.show()
+            thr.show()
         else:
             x.show()
             y.show()
             mag.show()
+            thr.show()
 
     elif mode == "L" or mode == "P":
         eq = equalize_singlechannel(indata)

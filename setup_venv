@@ -1,4 +1,7 @@
+#! /bin/bash
+
 python3 -m venv .
+source bin/activate
 pip install --upgrade pip
 pip install numpy Pillow Cython
 python3 setup.py build_ext --inplace
