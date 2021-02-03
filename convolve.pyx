@@ -1,41 +1,77 @@
-# convolve.pyx
+# distutils: extra_compile_args = -fopenmp
+# distutils: extra_link_args = -fopenmp
 
 import numpy as np
 cimport numpy as np
+from cython.parallel cimport prange, parallel
 cimport cython
+cimport openmp
+from libc.math cimport sqrt, round
 
-DTYPE = np.int 
-ctypedef np.int_t DTYPE_t
+DTYPE = np.int64
+ctypedef np.int64_t DTYPE_t
 DTYPE8 = np.uint8
 ctypedef np.uint8_t DTYPE8_t
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def convolve(np.ndarray[DTYPE8_t, ndim=2] f, np.ndarray[DTYPE_t, ndim=2] g):
-    cdef int x, y, s, t, v, w, s_from, s_to, t_from, t_to
-    cdef int vmax = f.shape[0]
-    cdef int wmax = f.shape[1]
-    cdef int smax = g.shape[0]
-    cdef int tmax = g.shape[1]
-    cdef int smid = smax // 2
-    cdef int tmid = tmax // 2
-    cdef int xmax = vmax + 2 * smid
-    cdef int ymax = wmax + 2 * tmid
-    
+cpdef convolve(np.ndarray[DTYPE8_t, ndim=2] img, np.ndarray[DTYPE_t, ndim=2] window, DTYPE8_t thr, bint norm):
+    cdef int x, y, s, t, v, w, i, wx_from, wx_to, wy_from, wy_to, lsum, sos
+    cdef unsigned char ctr, idx, sd, mean, sqd
+    cdef float var
+    cdef int imgx = img.shape[0]
+    cdef int imgy = img.shape[1]
+    cdef int winx = window.shape[0]
+    cdef int winy = window.shape[1]
+    cdef int wxmid = winx // 2
+    cdef int wymid = winy // 2
+    cdef int outx = imgx + 2 * wxmid
+    cdef int outy = imgy + 2 * wymid
+
+    cdef np.ndarray[DTYPE8_t, ndim=1] neighborhood = np.zeros([winx*winy], dtype=DTYPE8)
     cdef DTYPE8_t value
-    cdef np.ndarray[DTYPE8_t, ndim=2] h = np.zeros([xmax, ymax], dtype=DTYPE8)
-    
-    for x in range(xmax):
-        for y in range(ymax):
-            s_from = max(smid - x, -smid)
-            s_to = min((xmax - x) - smid, smid + 1)
-            t_from = max(tmid - y, -tmid)
-            t_to = min((ymax - y) - tmid, tmid + 1)
-            value = 0
-            for s in range(s_from, s_to):
-                for t in range(t_from, t_to):
-                    v = x - smid + s
-                    w = y - tmid + t
-                    value += g[smid - s, tmid - t] * f[v, w]
-            h[x, y] = value
-    return h
+    cdef np.ndarray[DTYPE8_t, ndim=2] out = np.zeros([outx, outy], dtype=DTYPE8)
+    with nogil, parallel(num_threads=8):
+        for x in prange(outx, schedule='guided'):
+            for y in prange(outy, schedule='guided'):
+                wx_from = max(wxmid - x, -wxmid)
+                wx_to = min((outx - x) - wxmid, wxmid + 1)
+                wy_from = max(wymid - y, -wymid)
+                wy_to = min((outy - y) - wymid, wymid + 1)
+                value = 0
+                ctr = 0
+                lsum = 0
+                for s in range(wx_from, wx_to):
+                    for t in range(wy_from, wy_to):
+                        v = x - wxmid + s
+                        w = y - wymid + t
+                        if norm:
+                            neighborhood[ctr] = img[v, w]
+                            ctr = ctr + 1
+                            lsum = lsum + img[v, w]
+                        value = value + window[wxmid - s, wymid - t] * img[v, w]
+                        if value < 0:
+                            value = -value
+                            # Threshold
+                        if thr > 0 and value < thr:
+                            value = img[v, w]
+                # Locally Normalize Value
+                if norm:
+                    idx = (wx_to - wx_from) * (wy_to - wy_from)
+                    mean = lsum / idx
+                    sd = 0
+                    sos = 0
+                    for i in range(idx):
+                        if neighborhood[i] == 0:
+                            continue
+                        sqd = (neighborhood[i] - mean) * (neighborhood[i] - mean)
+                        sos = sos + sqd
+                        neighborhood[i] = 0
+                    var = sos / idx
+                    sd = <unsigned char>round(sqrt(var))
+                    if mean == 0:
+                        pass
+                    else:
+                        value = <unsigned char>((value - sd) // mean)
+                out[x, y] = value
+    return out

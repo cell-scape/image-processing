@@ -3,13 +3,16 @@ import os.path
 import argparse
 from itertools import chain
 
-from convolve import convolve
-
 import numpy as np
 from PIL import Image
 
+from convolve import convolve
+
 # Constants: Bit depth and gradient operators
-BITS = 256 
+BITS = 256
+BASIC_X = np.array([[1],[-1]])
+BASIC_Y = np.array([[-1], [1]])
+ROBERTS = np.array([[1, 0], [0, -1]])
 PREWITT_GX = np.array([[1, 0 , -1], [1, 0, -1], [1, 0, -1]])
 PREWITT_GY = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
 SOBEL_GX = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
@@ -133,59 +136,70 @@ def transform_split(rgb, indata):
 
 # Gradient Functions
 
-def naive_convolve(imgdata, kernel):
-    vmax, wmax = imgdata.shape
-    smax, tmax = kernel.shape
-    smid = smax // 2
-    tmid = tmax // 2
-    xmax = vmax + 2 * smid
-    ymax = wmax + 2 * tmid
-    outdata = np.zeros([xmax, ymax], dtype=np.uint8)
-    for x in range(xmax):
-        for y in range(ymax):
-            s_from = max(smid - x, -smid)
-            s_to = min((xmax - x) - smid, smid + 1)
-            t_from = max(tmid - y, -tmid)
-            t_to = min((ymax - y) - tmid, tmid + 1)
+def native_convolve(imgdata, kernel, threshold, normalize):
+    imgx, imgy = imgdata.shape
+    kx, ky = kernel.shape
+    kxmid = kx // 2
+    kymid = ky // 2
+    outx = imgx + 2 * kxmid
+    outy = imgy + 2 * kymid
+    outdata = np.zeros([outx, outy], dtype=np.uint8)
+    for x in range(outx):
+        for y in range(outy):
+            kx_from = max(kxmid - x, -kxmid)
+            kx_to = min((outx - x) - kxmid, kxmid + 1)
+            ky_from = max(kymid - y, -kymid)
+            ky_to = min((outy - y) - kymid, kymid + 1)
             value = 0
-            for s in range(s_from, s_to):
-                for t in range(t_from, t_to):
-                    v = x - smid + s
-                    w = y - tmid + t
-                    value += kernel[smid - s, tmid - t] * imgdata[v, w]
+            for s in range(kx_from, kx_to):
+                for t in range(ky_from, ky_to):
+                    v = x - kxmid + s
+                    w = y - kymid + t
+                    value += np.absolute(kernel[kxmid - s, kymid - t] * imgdata[v, w])
+                    if value < threshold:
+                        value = imgdata[v, w]
             outdata[x, y] = value
     return outdata
 
-def sobel(indata):
+def basic(indata, threshold=0, norm=0):
+    x = convolve(indata, BASIC_X, threshold, norm)
+    y = convolve(indata, BASIC_Y, threshold, norm)
+    return x, y, np.hypot(x, y)
+
+def roberts(indata, threshold=0, norm=0):
+    get_new_image(convolve(indata, ROBERTS, threshold, norm), "L").show()
+    sys.exit(0)
+
+def sobel(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves Sobel operator with image data"""
-    sx = naive_convolve(indata, SOBEL_GX)
-    sy = naive_convolve(indata, SOBEL_GY)
+    sx = convolve(indata, SOBEL_GX, threshold, norm)
+    sy = convolve(indata, SOBEL_GY, threshold, norm)
     return sx, sy, np.hypot(sx, sy)
 
-def prewitt(indata):
+def prewitt(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves Prewitt operator with image data"""
-    px = convolve(indata, PREWITT_GX)
-    py = convolve(indata, PREWITT_GY)
+    px = convolve(indata, PREWITT_GX, threshold, norm)
+    py = convolve(indata, PREWITT_GY, threshold, norm)
     return px, py, np.hypot(px, py)
 
-def scharr(indata):
+def scharr(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves common Scharr operator with image data"""
-    scx = convolve(indata, SCHARR_GX)
-    scy = convolve(indata, SCHARR_GY)
+    scx = convolve(indata, SCHARR_GX, threshold, norm)
+    scy = convolve(indata, SCHARR_GY, threshold, norm)
     return scx, scy, np.hypot(scx, scy)
 
-def optimal(indata):
+def optimal(indata, threshold=0, norm=0):
     """Pass to gradient_images(): Convolves optimal Scharr operator with images data"""
-    ox = convolve(indata, OPTIMAL_GX)
-    oy = convolve(indata, OPTIMAL_GY)
+    ox = convolve(indata, OPTIMAL_GX, threshold, norm)
+    oy = convolve(indata, OPTIMAL_GY, threshold, norm)
     return ox, oy, np.hypot(ox, oy)
 
-def gradient_images(imgdata, kernel):
-    """Returns tuple of x, y, and xy gradient images. Takes image data and a kernel"""
-    x, y, sobel = kernel(imgdata)
+def gradient_images(imgdata, kernel, threshold=0, norm=0):
+    """Returns tuple of x, y, and mag gradient images. Takes image data and a kernel"""
+    x, y, mag = kernel(imgdata, threshold, norm)
     return (get_new_image(x, "L"),
             get_new_image(y, "L"),
-            get_new_image(sobel, "L"))
+            get_new_image(mag, "L"))
 
 
 # Convenience Functions
@@ -229,17 +243,29 @@ def setup_argparse():
                         help="The image file mode: l, p, rgb, hsv, gradient",
                         choices=["l", "p", "rgb", "hsv", "gradient"],
                         default="l")
-    parser.add_argument("-i",
+    parser.add_argument("-i", "--initial",
                         help="Show initial images",
                         action="store_true",
                         dest="initial",
                         required=False)
-    parser.add_argument("-o",
-                        help="Select operator for gradients",
-                        choices=["sobel", "prewitt", "scharr", "optimal"],
+    parser.add_argument("-o", "--operator",
+                        help="Select operator for gradients: sobel, prewitt, scharr, optimal",
+                        choices=["sobel", "prewitt", "scharr", "optimal", "basic", "roberts"],
                         dest="operator",
                         default="sobel",
                         metavar="OPERATOR",
+                        required=False)
+    parser.add_argument("-t", "--threshold",
+                        help="Select value from 0-255 as gradient threshold",
+                        dest="threshold",
+                        metavar="N",
+                        type=int,
+                        default=0,
+                        required=False)
+    parser.add_argument("-n", "--normalize",
+                        help="Locally Normalize Gradient",
+                        dest="norm",
+                        action="store_true",
                         required=False)
 
     optiongroup.add_argument("-s", "--split",
@@ -248,17 +274,17 @@ def setup_argparse():
     optiongroup.add_argument("-a", "--all",
                             help="hist. eq. on all HSV channels, or all gradient types",
                             action="store_true")
-    optiongroup.add_argument("-x",
+    optiongroup.add_argument("-x", "--X",
                              help="Gradient wrt X",
                              dest="x",
                              action="store_true")
-    optiongroup.add_argument("-y",
+    optiongroup.add_argument("-y", "--Y",
                              help="Gradient wrt Y",
                              dest="y",
                              action="store_true")
-    optiongroup.add_argument("-xy",
-                             help="XY gradient: sqrt(x^2 + y^2)",
-                             dest="xy",
+    optiongroup.add_argument("-mag", "--magnitude",
+                             help="gradient magnitude: sqrt(x^2 + y^2)",
+                             dest="mag",
                              action="store_true")
     return parser
 
@@ -271,6 +297,7 @@ if __name__ == '__main__':
 
     mode = args.mode.upper()
     grad = False
+    norm = 0
     if mode == "GRADIENT":
         grad = True
         mode = "L"
@@ -282,17 +309,21 @@ if __name__ == '__main__':
             rgb_split_preprocess(indata)
 
     if grad:
-        x, y, xy = gradient_images(indata, eval(args.operator))
+        if args.norm:
+            norm = 1
+        if args.threshold < 0 or args.threshold > 255:
+            sys.exit("Threshold value must be 0-255")
+        x, y, mag = gradient_images(indata, eval(args.operator), args.threshold, norm)
         if args.x:
             x.show()
         elif args.y:
             y.show()
-        elif args.xy:
-            xy.show()
+        elif args.mag:
+            mag.show()
         else:
             x.show()
             y.show()
-            xy.show()
+            mag.show()
 
     elif mode == "L" or mode == "P":
         eq = equalize_singlechannel(indata)
