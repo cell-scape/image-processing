@@ -5,29 +5,6 @@ import unittest
 from images import *
 
 
-class ImagesTestSuite(unittest.TestSuite):
-    pass
-
-
-class HistogramEqualizationTestSuite(unittest.TestSuite):
-    pass
-
-
-class GradientTestSuite(unittest.TestSuite):
-    pass
-
-
-
-class TestImageFunctions(unittest.TestCase):
-    def test_get_image_data(self):
-        original = get_image_data("testimg/preprocessed/tree.jpg", "L")
-        copied = get_image_data("testimg/processed/copy/tree.jpg", "L")
-        self.assertTrue((original == copied).all())
-
-    def test_get_new_image(self):
-        pass
-
-
 class TestHistogramFunctions(unittest.TestCase):
     def test_get_grayscale_histogram(self):
         testimg = np.array([i for i in range(BITS)], dtype=np.uint8)
@@ -48,48 +25,3 @@ class TestHistogramFunctions(unittest.TestCase):
     def test_get_hsv_histogram(self):
         pass
 
-
-class TestCDFFunctions(unittest.TestCase):
-    def test_get_cdf(self):
-        pass
-
-    def test_get_rgb_cdf(self):
-        pass
-
-
-class TestEqualizeFunctions(unittest.TestCase):
-    def test_equalize(self):
-        pass
-
-    def test_equalize_rgb(self):
-        pass
-
-
-class TestHistogramTransformFunctions(unittest.TestCase):
-    def test_transform_grayscale(self):
-        pass
-
-    def test_transform_rgb(self):
-        pass
-
-    def test_transform_hsv(self):
-        pass
-
-    def test_transform_split(self):
-        pass
-
-
-class TestConvenienceFunctions(unittest.TestCase):
-    def test_rgb_split(self):
-        pass
-
-    def test_equalize_multichannel(self):
-        pass
-
-    def test_equalize_singlechannel(self):
-        pass
-
-
-class TestGradientFunctions(unittest.TestCase):
-    def test_vertical_gradient(self):
-        pass
