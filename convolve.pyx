@@ -33,7 +33,7 @@ cpdef convolve(np.ndarray[DTYPE8_t, ndim=2] img, np.ndarray[DTYPE_t, ndim=2] win
     cdef np.ndarray[DTYPE8_t, ndim=2] out = np.zeros([outx, outy], dtype=DTYPE8)
     with nogil, parallel(num_threads=8):
         for x in prange(outx, schedule='guided'):
-            for y in prange(outy, schedule='guided'):
+            for y in range(outy):
                 wx_from = max(wxmid - x, -wxmid)
                 wx_to = min((outx - x) - wxmid, wxmid + 1)
                 wy_from = max(wymid - y, -wymid)
@@ -50,12 +50,13 @@ cpdef convolve(np.ndarray[DTYPE8_t, ndim=2] img, np.ndarray[DTYPE_t, ndim=2] win
                             ctr = ctr + 1
                             lsum = lsum + img[v, w]
                         value = value + window[wxmid - s, wymid - t] * img[v, w]
+                        # Abs
                         if value < 0:
                             value = -value
-                            # Threshold
+                        # Threshold
                         if thr > 0 and value < thr:
                             value = img[v, w]
-                # Locally Normalize Value
+                # Locally Normalize Value within window
                 if norm:
                     idx = (wx_to - wx_from) * (wy_to - wy_from)
                     mean = lsum / idx
@@ -69,9 +70,7 @@ cpdef convolve(np.ndarray[DTYPE8_t, ndim=2] img, np.ndarray[DTYPE_t, ndim=2] win
                         neighborhood[i] = 0
                     var = sos / idx
                     sd = <unsigned char>round(sqrt(var))
-                    if mean == 0:
-                        pass
-                    else:
+                    if mean > 0:
                         value = <unsigned char>((value - sd) // mean)
                 out[x, y] = value
     return out

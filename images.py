@@ -324,7 +324,6 @@ if __name__ == '__main__':
 
     mode = args.mode.upper()
     grad = False
-    m = False
     norm = 0
     if mode == "GRADIENT":
         grad = True
@@ -340,12 +339,9 @@ if __name__ == '__main__':
         if args.norm:
             norm = 1
             
-        if args.m:
-            m = True
-            
         if args.threshold < 0 or args.threshold > 255:
             sys.exit("Threshold value must be 0-255")
-        x, y, mag, thr = gradient_images(indata, eval(args.operator), args.threshold, norm, m=False)
+        x, y, mag, thr = gradient_images(indata, eval(args.operator), args.threshold, norm, args.m)
         if args.x:
             x.show()
         elif args.y:
